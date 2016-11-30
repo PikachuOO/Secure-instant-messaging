@@ -21,7 +21,9 @@ auth_users = []
 username = ''
 server_addr = ('127.0.0.1', 8000)
 
-
+#remembering values
+last_PUBKEY = ''
+last_DHSTARTREQ = ''
 
 #Send a msg to server to socket s
 def SendMassage(conn):
@@ -59,16 +61,16 @@ def ListenForMassage(conn):
 		data, addr = conn.recvfrom(2048)
 
 		data = json.loads(data.decode())
-		print(data)
+		print(data['type'], data)
 
 
 		if(data['type'] == 'PROOF'):
-			DH_key_establishment_server(conn, 'des_username', 2, data)
+			DH_key_establishment_server(conn, 'des_username_does_not_matter', 2, data)
 
 		elif(data['type'] == 'PUBKEY'):
 			des_addr = data['des_addr']
 			inner_data, des_addr = DH_key_establishment_server(conn, des_addr[1], 4, data)
-			DH_key_establishment_user(conn, des_addr, 1, data)
+			DH_key_establishment_user(conn, des_addr, 1, inner_data)
 
 
 
@@ -83,13 +85,13 @@ def ListenForMassage(conn):
 
 
 		elif(data['type'] == 'STARTTALKAUTH'):
-			username = data['username']
+			username = data['initiator_username']
 			recv_talk_to_user_authenticate(conn, (username, addr), 1, data)
 		elif(data['type'] == 'CONTINUETALKAUTH'):
-			username = data['username']
+			username = data['receiver_username']
 			send_talk_to_user_authenticate(conn, (username, addr), 2, data)
 		elif(data['type'] == 'FINISHTALKAUTH'):
-			username = data['username']
+			username = data['initiator_username']
 			recv_talk_to_user_authenticate(conn, (username, addr), 2, data)
 		
 
@@ -134,17 +136,19 @@ def send_conversation(conn, des_user, data):
 
 def recv_talk_to_user_authenticate(conn, des_user, step, data):
 	if(step == 1):
-		#recv msg 1, retrieves values from data
+		#recv msg 1, retrieve initiator, receiver, verify receiver, ENCNA
 		#send msg 2 CONTINUETALKAUTH
 
 		msg = {
 			'type' : 'CONTINUETALKAUTH',
-			'username' : username
+			'receiver_username' : username,
+			'ENC_NA_NB': 'ENC_NA_NB',
 		}
 		conn.sendto(json.dumps(msg).encode(), des_user[1])
 
 	if(step == 2):
-		#recv msg 3 FINISHTALKAUTH
+		#recv msg 3 FINISHTALKAUTH, verify NB with session key
+
 		#add username to authenticated users
 		auth_users.append(des_user)
 
@@ -155,59 +159,80 @@ def send_talk_to_user_authenticate(conn, des_user, step, data):
 	#send msg 1 STARTTALKAUTH to username
 		msg = {
 			'type' : 'STARTTALKAUTH',
-			'username' : username
+			'initiator_username' : username,
+			'receiver_username': des_user[0],
+			'ENCNA': 'ENCNA',
 		}	
 		conn.sendto(json.dumps(msg).encode(), des_user[1])
 
 	if(step == 2):
-		#recv msg 2 CONTINUETALKAUTH	
+		#recv msg 2 CONTINUETALKAUTH, verify NA with session key
+			
 		#send msg 3 FINISHTALKAUTH
 		msg = {
 			'type' : 'FINISHTALKAUTH',
-			'username' : username
+			'initiator_username' : username,
+			'ENCNB': 'ENCNB'
 		}			
 		conn.sendto(json.dumps(msg).encode(), des_user[1])
+
+		#add username to authenticated users
 		auth_users.append(des_user)
-	#add username to authenticated users
+
 
 def DH_key_establishment_recv_from_user(conn, des_addr, data):
 	
-	#recv DHSTARTREQ, get values from data(1'th msg from user)
+	#recv DHSTARTREQ: get values from TTB(NB, g, p), verify NA, and G_A_mod_P, verify signature
 	
-	#send msg 2(g^b, ...) DHCONTINUEREQ to other user
-	msg = 'DHCONTINUEREQ' + username
+	#send msg 2: DHCONTINUEREQ to initiator
 	msg = {
 		'type' : 'DHCONTINUEREQ',
-		'username' : username
-		} 
+		'receiver_username' : username,
+
+		'NB': 'NB',
+		'G_B_mod_P': 'G_B_mod_P',
+		'signature': 'signature'
+	}
+
 	conn.sendto(json.dumps(msg).encode(), des_addr)
 
 	#build shared_key and add it to the list shared_keys_database
-	des_username = data['username']
+	des_username = data['initiator_username']
 	auth_users.append((des_username, des_addr))
-	shared_keys_database.append(('sessionkey', (des_username, des_addr), 1000))
+	session_key = 'session_key'
+	shared_keys_database.append((session_key, (des_username, des_addr), 1000))
 
 
 def DH_key_establishment_user(conn, des_addr, step, data):
-	#get values from data(4'th msg from server)
-	if(step == 1):
-	#send msg 1(ttb, g^a, ...) DHSTARTREQ to username
-	#retrieve values from data
+	if(step == 1): 	
+		#send msg1 DHSTARTREQ:
+		
+		#retrieve values from data(PUBKEY)
+		g = data['g']
+		p = data['p']
 
 		msg = {
 			'type' : 'DHSTARTREQ',
-			'username' : username
+			'initiator_username' : username,
+
+			'TTB': data['TTB'],
+			'NA': data['NA'],
+			'G_A_mod_P': 'G_A_mod_P',
+			'signature': 'signature'
 
 		}
+		global last_DHSTARTREQ
+		last_DHSTARTREQ = msg
 		conn.sendto(json.dumps(msg).encode(), des_addr)
 
 	if(step == 2):
-		#recv msg 2(g^b,...) DHCONTINUEREQ
-		des_username = data['username']
-
+		#recv msg 2 DHCONTINUEREQ: verify NB, verify signature
+		des_username = data['receiver_username']
+		NB = data['NB']
 		#build shared_key and add it to the list shared_keys_database
 		auth_users.append((des_username, des_addr))
-		shared_keys_database.append(('sessionkey', (des_username, des_addr), 1000))
+		session_key = 'session_key'
+		shared_keys_database.append((session_key, (des_username, des_addr), 1000))
 
 
 def DH_key_establishment_server(conn, des_username, step = 1, data = ''):
@@ -228,18 +253,27 @@ def DH_key_establishment_server(conn, des_username, step = 1, data = ''):
 		proof_back = find_proof_back(hash_of_nonce, sub_nonce)
 
 		msg = { 'type': 'PROOFBACK',
-			'proof_back': proof_back
+			'proof_back': proof_back,
+			'initiator_username': username,
+			'receiver_username': des_username,
+			'signature': 'signature',
 			}
 		conn.sendto(json.dumps(msg).encode(), server_addr)
 
 
 
 	if(step == 4):
-		#recv msg 4(ttb, public key) PUBKEY
+		#recv msg 4 PUBKEY
 		des_addr = data['des_addr']
 		des_addr = (des_addr[0], des_addr[1])
+
+		#decrypt 
+		ENCA = data['ENCA']
+		DECA = ENCA
+		global last_PUBKEY
+		last_PUBKEY = DECA
 		#should return msg 4 of protocol(ttb, sign g^a, ...)
-		return ('inner data of pubkey msg', des_addr)
+		return (DECA, des_addr)
 
 
 

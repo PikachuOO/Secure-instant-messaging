@@ -15,13 +15,16 @@ import random, json
 
 
 
-# users is a list, each one is (username, addr)
+# users: list of (username, addr)
 users = []
 server_addr = ('127.0.0.1', 8000)
 
+#list of (users, public_key)
+pub_keys = []
 
+#Remembering values
 proof_hash = ''
-des_username = ''
+last_REQSTART = ''
 
 
 def create_proof(length):
@@ -37,11 +40,11 @@ def authenticate_talkto(s, addr, step, data):
 	if(step == 2):
 		#recv REQSTART
 		#send msg 2(hash) PROOF
-		global proof_hash
 		hash_of_nonce, sub_nonce = create_proof(32)
 
-		global des_username
-		des_username = data['des_username'].encode()
+		global last_REQSTART
+		#des_username = data['des_username'].encode()
+		last_REQSTART = data
 
 		msg = {
 			'type': 'PROOF',
@@ -52,35 +55,88 @@ def authenticate_talkto(s, addr, step, data):
 
 
 	if(step == 3):
-		#recv msg 3(proof) PROOFBACK
+		#recv msg 3(proof) PROOFBACK, verify initiator, verify signature
+
 		#validate proofback regarding proof
 		proof_back = data['proof_back'].encode()
 
 		if(proof_back != proof_hash):
-			print("You are probably trying to DOS attack me...")
+			print("Proofback not valid! You are probably trying to DOS attack me...")
 			return
 
+		#validate sender based on previous msg
+		initiator_username = data['initiator_username']
 
-		#send msg 4 PUBKEY
-		NA = os.urandom(16)
-		NA = base64.b64encode(NA).decode()
+		if(initiator_username != initiator_username):
+			print("You are not" + username)
+			return
+		
+
+		#find address of stored des_username
 		des_addr = None
 		for i in users:
-			if(des_username == i[0]):
+			if(last_REQSTART['des_username'].encode() == i[0]):
 				des_addr = i[1]
+
+
 		if(des_addr is not None):
-			#msg = str('PUBKEY' + NA + des_addr[0] + str(des_addr[1]))
+			#send msg 4 PUBKEY
+			receiver_username = data['receiver_username']
+
+			NA = os.urandom(16)
+			NA = base64.b64encode(NA).decode()
+			NB = os.urandom(16)
+			NB = base64.b64encode(NB).decode()
+
+			g = 'g'
+			p = 'p'
+			#create TTB#
+			inner_TTB = {
+				'NA': NA,
+				'NB': NB,
+				
+				'initiator': initiator_username,
+				'pubkey_initiator': 'pubkey_initiator',
+				'g': g,
+				'p': p,
+				
+			}
+			ENC_inner_TTB = inner_TTB
+			TTB = {
+				'ENC': ENC_inner_TTB,
+				'signature': 'signature'
+	
+			}
+			############
+			inner_msg = {
+
+				'NA': NA,
+				'NB': NB,
+
+				'TTB': TTB,
+
+				'PUBKEY': 'PUBKEY_receiver',
+
+				'g': g,
+				'p': p,
+
+			}
+			ENC_inner_msg = inner_msg
 			msg = {
 				'type': 'PUBKEY',
-				'NA': NA,
-				'des_addr': des_addr
+
+				'ENCA': ENC_inner_msg,
+
+				'des_addr': des_addr,
+				
+				'signature': 'signature',
 			}
 		else:
-			#msg = 'User not found!'
 			msg = {
 				'type': 'Error',
 				'error': 'User not found'
 			}
+
 		s.sendto(json.dumps(msg).encode(), addr)
 
 def main():
@@ -123,7 +179,7 @@ def main():
 		#recive msg
 		data, addr = s.recvfrom(2048)
 		data = json.loads(data.decode())
-		print(data, addr)
+		print(data['type'], data, addr)
 
 		#msg type
 		if(data['type'] == 'HI'):
