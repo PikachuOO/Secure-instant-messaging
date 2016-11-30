@@ -5,22 +5,25 @@ import os, sys, getopt, base64
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
-def LoadKeys(public_key_file, private_key_file):
-  # Load private key
-  with open(private_key_file, "rb") as key_file:
-    private_key = serialization.load_der_private_key(
-              key_file.read(),
-              password=None,
-              backend=default_backend()
-            )
-  # Load public_key
-  with open(public_key_file, "rb") as key_file:
-    public_key = serialization.load_der_public_key(
-              key_file.read(),
-              backend=default_backend()
-            )
+def LoadKeys(public_key_file, private_key_file = None):
+	# Load private key
+	private_key = None
+	public_key = None
+	if(private_key_file != None):
+		with open(private_key_file, "rb") as key_file:
+			private_key = serialization.load_der_private_key(
+					key_file.read(),
+					password=None,
+					backend=default_backend()
+			)
+	# Load public_key
+	with open(public_key_file, "rb") as key_file:
+		public_key = serialization.load_der_public_key(
+				key_file.read(),
+				backend=default_backend()
+		)
 
-  return (public_key, private_key)
+	return (public_key, private_key)
 
 def Hash(message):
 	digest = hashes.Hash(hashes.SHA256(), backend=default_backend())

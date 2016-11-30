@@ -19,7 +19,7 @@ import random, json
 users = []
 server_addr = ('127.0.0.1', 8000)
 
-#list of (users, public_key)
+#list of (username, public_key)
 pub_keys = []
 
 #Remembering values
@@ -43,7 +43,6 @@ def authenticate_talkto(s, addr, step, data):
 		hash_of_nonce, sub_nonce = create_proof(32)
 
 		global last_REQSTART
-		#des_username = data['des_username'].encode()
 		last_REQSTART = data
 
 		msg = {
@@ -55,7 +54,7 @@ def authenticate_talkto(s, addr, step, data):
 
 
 	if(step == 3):
-		#recv msg 3(proof) PROOFBACK, verify initiator, verify signature
+		#recv msg3 PROOFBACK: verify initiator, verify signature
 
 		#validate proofback regarding proof
 		proof_back = data['proof_back'].encode()
@@ -67,10 +66,16 @@ def authenticate_talkto(s, addr, step, data):
 		#validate sender based on previous msg
 		initiator_username = data['initiator_username']
 
-		if(initiator_username != initiator_username):
-			print("You are not" + username)
+		if(initiator_username != last_REQSTART['initiator_username']):
+			print("You are not" + initiator_username)
 			return
+
 		
+		#verify signature
+		m = data['proof_back'] + data['initiator_username'] + data['receiver_username']
+		if(m != m):#sign(m) != data['signature']
+			print("Wrong signature!")
+			return	
 
 		#find address of stored des_username
 		des_addr = None
@@ -90,21 +95,41 @@ def authenticate_talkto(s, addr, step, data):
 
 			g = 'g'
 			p = 'p'
+
+			# Finding public keys of initiator and receiver
+			pubkey_initiator = None
+			pubkey_receiver = None
+			for i in pub_keys:
+				username = i[0]
+				if(username == initiator_username):
+					pubkey_initiator = i[1]
+				if(username == receiver_username):
+					pubkey_receiver = i[1]
+
+			if(pubkey_initiator is None):
+				print("Public key of " + initiator_username + " not found in the server")
+				return 
+			if(pubkey_receiver is None):
+				print("Public key of " + receiver_username + " not found in the server")
+				return 
+
+
 			#create TTB#
 			inner_TTB = {
 				'NA': NA,
 				'NB': NB,
 				
-				'initiator': initiator_username,
-				'pubkey_initiator': 'pubkey_initiator',
+				'initiator_username': initiator_username,
+				'pubkey_initiator': pubkey_initiator,
 				'g': g,
 				'p': p,
 				
 			}
-			ENC_inner_TTB = inner_TTB
+			ENCB_inner_TTB = inner_TTB #enc(inner_TTB, pubkey_receiver)
+			signature = 'signature'# sign(ENCN_inner_TTB)
 			TTB = {
-				'ENC': ENC_inner_TTB,
-				'signature': 'signature'
+				'ENCB': ENCB_inner_TTB,
+				'signature': signature
 	
 			}
 			############
@@ -115,13 +140,16 @@ def authenticate_talkto(s, addr, step, data):
 
 				'TTB': TTB,
 
-				'PUBKEY': 'PUBKEY_receiver',
+				'pubkey_receiver': pubkey_receiver,
 
 				'g': g,
 				'p': p,
 
 			}
-			ENC_inner_msg = inner_msg
+
+			ENC_inner_msg = inner_msg #enc(inner_msg, pubkey_initiator)
+			signature = ENC_inner_msg # signature = sign(ENC_inner_msg)
+
 			msg = {
 				'type': 'PUBKEY',
 
@@ -129,7 +157,7 @@ def authenticate_talkto(s, addr, step, data):
 
 				'des_addr': des_addr,
 				
-				'signature': 'signature',
+				'signature': signature,
 			}
 		else:
 			msg = {
@@ -147,6 +175,13 @@ def main():
 	
   	#Load keys
   	public_key, private_key = LoadKeys(public_key_file, private_key_file)
+	#Load users' public_key
+	number_of_public_keys = int(sys.argv[3])
+	for i in range(0, number_of_public_keys):
+		username = sys.argv[i*2+4]
+		pk_file = sys.argv[i*2+5]
+		pk, temp = LoadKeys(pk_file)
+		pub_keys.append( (username, pk_file) )
 
 
 	#create socket and bind ip,port to the socket with exception handling
@@ -183,8 +218,16 @@ def main():
 
 		#msg type
 		if(data['type'] == 'HI'):
-			#if(user_not_found(data[2:]):
-			users.append((data['username'].encode(), addr))
+			user = (data['username'].encode(), addr)
+			pubkey_find = False
+			for i in pub_keys:
+				username = i[0]
+				if(username == user[0]):
+					pubkey_find = True
+			if(pubkey_find == False):
+				print('Server does not have public_key of ' + user[0])
+			else:
+				users.append(user)
 
 		elif(data['type'] == 'REQSTART'):
 			authenticate_talkto(s, addr, 2, data)
