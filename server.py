@@ -90,7 +90,9 @@ def authenticate_talkto(s, addr, step, data):
 		pk = retrieve_pubkey(initiator_username)
 		m = data['proof_back'] + data['initiator_username'] + data['receiver_username']
 		
-	
+		
+		sig = base64.b64decode(data['signature'])
+
 		if( VerifySign(m.encode(), sig, pk) == False):
 			print("Wrong signature!")
 			return	
@@ -140,10 +142,24 @@ def authenticate_talkto(s, addr, step, data):
 				'p': p,
 				
 			}
-			ENCB_inner_TTB = inner_TTB #enc(inner_TTB, pubkey_receiver)
-			signature = 'signature'# sign(ENCN_inner_TTB)
+			#ENCB_inner_TTB = inner_TTB #enc(inner_TTB, pubkey_receiver)
+			#signature = 'signature'# sign(ENCN_inner_TTB)
+
+			#Encryption of TTB
+			pk, temp = LoadKeys(pubkey_receiver, None)
+
+			ENC_inner_TTB = Encrypt(str(inner_TTB), pk, private_key)
+			ENC_inner_TTB = base64.b64encode(ENC_inner_TTB)
+
+			#Signing
+			signature = RSASign(ENC_inner_TTB, private_key)
+			signature = base64.b64encode(signature)
+
+			#print("###", type(signature), signature)
+			#print("!!!", type(ENC_inner_TTB), ENC_inner_TTB)
+
 			TTB = {
-				'ENCB': ENCB_inner_TTB,
+				'ENC': ENC_inner_TTB,
 				'signature': signature
 	
 			}
@@ -162,9 +178,20 @@ def authenticate_talkto(s, addr, step, data):
 
 			}
 
-			ENC_inner_msg = inner_msg #enc(inner_msg, pubkey_initiator)
-			signature = ENC_inner_msg # signature = sign(ENC_inner_msg)
 
+			#Encryption
+			pk, temp = LoadKeys(pubkey_initiator, None)
+
+			ENC_inner_msg = Encrypt(str(inner_msg), pk, private_key)
+			ENC_inner_msg = base64.b64encode(ENC_inner_msg)
+
+
+			#Signing
+			signature = RSASign(ENC_inner_msg, private_key)
+			signature = base64.b64encode(signature)
+
+		
+			#Create JSON
 			msg = {
 				'type': 'PUBKEY',
 
@@ -179,7 +206,6 @@ def authenticate_talkto(s, addr, step, data):
 				'type': 'Error',
 				'error': 'User not found'
 			}
-
 		s.sendto(json.dumps(msg).encode(), addr)
 
 def main():
@@ -189,6 +215,8 @@ def main():
 
 	
   	#Load keys
+	global public_key
+	global private_key
   	public_key, private_key = LoadKeys(public_key_file, private_key_file)
 	#Load users' public_key
 	number_of_public_keys = int(sys.argv[3])
@@ -227,10 +255,10 @@ def main():
 
 	while(1):
 		#recive msg
-		data, addr = s.recvfrom(2048)
+		data, addr = s.recvfrom(4096)
 		data = json.loads(data.decode())
 		print(data['type'], data, addr)
-
+		print('\n')
 		#msg type
 		if(data['type'] == 'HI'):
 			user = (data['username'].encode(), addr)

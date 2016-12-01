@@ -62,10 +62,11 @@ def SendMassage(conn):
 #Receive a msg from socket s 
 def ListenForMassage(conn):
 	while(1):
-		data, addr = conn.recvfrom(2048)
-
+		data, addr = conn.recvfrom(4096)
+		#print("!!!", data)
 		data = json.loads(data.decode())
 		print(data['type'], data)
+		print('\n')
 
 
 		if(data['type'] == 'PROOF'):
@@ -256,14 +257,24 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 	
 	#recv DHSTARTREQ: 
 
-	#verifying and extracting TTB
 	TTB = data['TTB']
-	TTB_ENC = TTB['ENCB']
-	TTB_signature = TTB['signature']
-	inner_TTB = TTB_ENC #dec(TTB_ENC, my_private_key)
-	if(TTB_signature != TTB_signature):
+	#Verify signature of TTB
+	STR_ENC_TTB = TTB['ENC'].encode()
+
+
+	#verify signature TTB
+	signature = base64.b64decode(TTB['signature'])
+	if( VerifySign(STR_ENC_TTB, signature, public_key_server) ):
 		print("Cannot verify TTB's signature from server")
 		return
+
+
+	#Decryption of TTB
+	inner_TTB = Decrypt(base64.b64decode(STR_ENC_TTB), public_key_server, private_key)
+	#convert str to dict
+	inner_TTB = eval(inner_TTB)
+
+	#verifying
 	g = inner_TTB['g']
 	p = inner_TTB['p']
 	pubkey_initiator = inner_TTB['pubkey_initiator']
@@ -275,6 +286,7 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 	if(NA != data['NA']):
 		print("Nonce does not match to what is inside my TTB")
 		return
+
 	#verify signature
 	if(data['signature'] != data['signature']):#!= verify( data['NA'] + data['G_A_mod_P'], pubkey_initiator)
 		print("Signature from initiator can not be verified")
@@ -365,10 +377,7 @@ def DH_key_establishment_server(conn, des_username, step = 1, data = ''):
 		msg = proof_back + username + last_REQSTART['des_username']
 
 		signature = RSASign(msg.encode(), private_key)
-		print("****", type(signature), signature)
-
-		print("$$$", type(base64.b64encode(signature)), base64.b64encode(signature))
-		print("#####", type(base64.b64encode(signature).decode()), base64.b64encode(signature).decode())
+		
 
 		msg = { 'type': 'PROOFBACK',
 			'proof_back': proof_back,
@@ -385,15 +394,21 @@ def DH_key_establishment_server(conn, des_username, step = 1, data = ''):
 		des_addr = data['des_addr']
 		des_addr = (des_addr[0], des_addr[1])
 
-		ENCA = data['ENCA']
-		signature = data['signature']
-		#verify signature
+		
+		STR_ENCA = data['ENCA'].encode()
 
-		if( 0 ): #verify(enca, signature, pubkey_server)
+		#verify signature
+		signature = base64.b64decode(data['signature'])
+		if( VerifySign(STR_ENCA, signature, public_key_server)):
 			print("Wrong signature on message 4(PUBKEY)")
 			return
 		
-		DECA = ENCA #denc(ENCA, my_private_key)
+
+		#Decryption
+		DECA = Decrypt(base64.b64decode(STR_ENCA), public_key_server, private_key)
+		#convert str to dict
+		DECA = eval(DECA)
+
 
 		global last_PUBKEY
 		last_PUBKEY = DECA
@@ -439,6 +454,7 @@ def main():
 	global private_key
 	public_key, private_key = LoadKeys(public_key_file, private_key_file)
 
+	global public_key_server
 	public_key_server, temp = LoadKeys(public_key_file_server, None)
 
 	#create socket and connect to server
