@@ -257,8 +257,9 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 	
 	#recv DHSTARTREQ: 
 
+
+	##########TTB###################
 	TTB = data['TTB']
-	#Verify signature of TTB
 	STR_ENC_TTB = TTB['ENC'].encode()
 
 
@@ -273,8 +274,11 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 	inner_TTB = Decrypt(base64.b64decode(STR_ENC_TTB), public_key_server, private_key)
 	#convert str to dict
 	inner_TTB = eval(inner_TTB)
+	################################
 
-	#verifying
+
+
+	#retrieving values from TTB
 	g = inner_TTB['g']
 	p = inner_TTB['p']
 	pubkey_initiator = inner_TTB['pubkey_initiator']
@@ -282,19 +286,30 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 	NB = inner_TTB['NB']
 	initiator_username = inner_TTB['initiator_username']
 
-	#verify NA
+
+	#verify NA and A
 	if(NA != data['NA']):
 		print("Nonce does not match to what is inside my TTB")
 		return
+	if(data['initiator_username'] != initiator_username):
+		print("You are not the one I see in my TTB")
+		return
 
 	#verify signature
-	if(data['signature'] != data['signature']):#!= verify( data['NA'] + data['G_A_mod_P'], pubkey_initiator)
+	m = data['NA'] + data['G_A_mod_P']
+	signature = base64.b64decode(data['signature'])
+	pk, temp = LoadKeys(pubkey_initiator, None)
+	if(VerifySign( m.encode(), signature, pk)):
 		print("Signature from initiator can not be verified")
 		return
 
 
+
 	#send msg 2: DHCONTINUEREQ to initiator
-	signature = NB + 'G_B_mod_P'
+	m = NB + 'G_B_mod_P'
+	signature = RSASign(m.encode(), private_key)
+	signature = base64.b64encode(signature)
+
 	msg = {
 		'type' : 'DHCONTINUEREQ',
 		'receiver_username' : username,
@@ -320,7 +335,12 @@ def DH_key_establishment_user(conn, des_addr, step, data):
 		#retrieve values from data(PUBKEY)
 		g = data['g']
 		p = data['p']
-		signature = 'signature'#sign(data['NA'] + 'G_A_mod_P')
+
+		#signature = 'signature'#sign(data['NA'] + 'G_A_mod_P')
+		m = data['NA'] + 'G_A_mod_P'
+		signature = RSASign(m.encode(), private_key)
+		signature = base64.b64encode(signature)
+
 		msg = {
 			'type' : 'DHSTARTREQ',
 			'initiator_username' : username,
@@ -345,7 +365,13 @@ def DH_key_establishment_user(conn, des_addr, step, data):
 			print("Your nonce does not match with my PUBKEY data")
 			return
 		#verify signature
-		if( data['signature'] != data['signature']):#!=data['NB'] + data['G_B_mod_P']		
+		m = NB + data['G_B_mod_P']
+		signature = data['signature']
+		signature = base64.b64decode(signature)
+		pubkey_receiver = last_PUBKEY['pubkey_receiver']
+		pk, temp = LoadKeys(pubkey_receiver, None)
+
+		if( VerifySign(m.encode(), signature, pk) == False):
 			print("Cannot verify your signature from DHCONTINUEREQ")
 			return
 
