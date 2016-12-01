@@ -31,9 +31,10 @@ last_CONTINUETALKAUTH = ''
 #Send a msg to server to socket s
 def SendMassage(conn):
 	while(1):
-		msg = input('')
+		msg = raw_input('')
 
 		if(msg.startswith('HI')):
+
 			global username
 			username = msg[3:]
 			data = {'type': 'HI', 'username' :msg[3:]}
@@ -41,7 +42,7 @@ def SendMassage(conn):
 
 		if(msg == 'CONVERSATION'):
 			print('Whom you want to talk?\n')
-			des_username = input('')
+			des_username = raw_input('')
 			des_user = None
 
 			talkto(conn, des_username)
@@ -53,7 +54,7 @@ def SendMassage(conn):
 
 			if(des_user != None):
 				print('Enter your message:')
-				m = input('')
+				m = raw_input('')
 				send_conversation(conn, des_user, m)
 					
 
@@ -125,7 +126,11 @@ def retrieve_session_key(username):
 			return i[0]
 	return None
 
-
+def user_session_key(username):#if username has a session key, return the user
+	for s, u, t in shared_keys_database:
+		if(u[0] == username):
+			return u
+	return None
 
 def recv_conversation(conn, data):
 	# show message to the user
@@ -145,6 +150,7 @@ def send_conversation(conn, des_user, data):
 
 
 def recv_talk_to_user_authenticate(conn, des_user, step, data):
+	global last_CONTINUETALKAUTH
 	if(step == 1):
 		#recv msg 1, retrieve initiator, receiver, verify receiver, ENCNA
 		initiator_username = data['initiator_username']
@@ -178,7 +184,7 @@ def recv_talk_to_user_authenticate(conn, des_user, step, data):
 			'ENC_NA_NB': ENC_NA_NB,
 		}
 
-		global last_CONTINUETALKAUTH
+
 		last_CONTINUETALKAUTH = {
 			'NB': NB,
 			'session_key': session_key,
@@ -187,7 +193,7 @@ def recv_talk_to_user_authenticate(conn, des_user, step, data):
 
 	if(step == 2):
 		#recv msg 3 FINISHTALKAUTH, verify NB with session key
-		global last_CONTINUETALKAUTH
+
 		session_key = last_CONTINUETALKAUTH['session_key']
 		ENCNB = data['ENCNB']
 		NB = ENCNB # symmetricdec(ENCNB, session_key)
@@ -198,7 +204,7 @@ def recv_talk_to_user_authenticate(conn, des_user, step, data):
 		auth_users.append(des_user)
 
 def send_talk_to_user_authenticate(conn, des_user, step, data):
-
+	global last_STARTTALKAUTH
 	if(step == 1):	
 		#send msg 1 STARTTALKAUTH to username
 		NA = os.urandom(16)
@@ -213,7 +219,7 @@ def send_talk_to_user_authenticate(conn, des_user, step, data):
 			'receiver_username': des_user[0],
 			'ENCNA': ENCNA,
 		}
-		global last_STARTTALKAUTH
+
 		last_STARTTALKAUTH = {
 			'NA': NA,
 			'session_key': session_key,
@@ -224,7 +230,7 @@ def send_talk_to_user_authenticate(conn, des_user, step, data):
 		#recv msg 2 CONTINUETALKAUTH, verify NA with session key
 		ENC_NA_NB = data['ENC_NA_NB']
 
-		global last_STARTTALKAUTH
+
 		session_key = last_STARTTALKAUTH['session_key']
 		NA_NB = ENC_NA_NB # symmetricdec(ENC_NA_NB, session_key)
 		
@@ -290,7 +296,7 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 
 	#build shared_key and add it to the list shared_keys_database
 	des_username = data['initiator_username']
-	#auth_users.append((des_username, des_addr))
+	auth_users.append((des_username, des_addr))
 	session_key = 'session_key'#G^ab mod p
 	shared_keys_database.append((session_key, (des_username, des_addr), 1000))
 
@@ -332,7 +338,7 @@ def DH_key_establishment_user(conn, des_addr, step, data):
 			return
 
 		#build shared_key and add it to the list shared_keys_database
-		#auth_users.append((des_username, des_addr))
+		auth_users.append((des_username, des_addr))
 		session_key = 'session_key'#G^ab mod p
 		shared_keys_database.append((session_key, (des_username, des_addr), 1000))
 
@@ -356,12 +362,19 @@ def DH_key_establishment_server(conn, des_username, step = 1, data = ''):
 
 		#send msg3 PROOFBACK
 		proof_back = find_proof_back(hash_of_nonce, sub_nonce)
-		signature = 'signature' #sign(proof_back + username + last_REQSTART['des_username'])
+		msg = proof_back + username + last_REQSTART['des_username']
+
+		signature = RSASign(msg.encode(), private_key)
+		print("****", type(signature), signature)
+
+		print("$$$", type(base64.b64encode(signature)), base64.b64encode(signature))
+		print("#####", type(base64.b64encode(signature).decode()), base64.b64encode(signature).decode())
+
 		msg = { 'type': 'PROOFBACK',
 			'proof_back': proof_back,
 			'initiator_username': username,
 			'receiver_username': last_REQSTART['des_username'],
-			'signature': signature,
+			'signature': base64.b64encode(signature),
 		}
 		conn.sendto(json.dumps(msg).encode(), server_addr)
 
@@ -395,15 +408,13 @@ def talkto(conn, username): #User wants to talk to username
 	for u in auth_users:
 		if(u[0] == username):
 			return
-	shared_key_exist = False
-	#check to see if this user already has a shared key with username
-	for s, u, t in shared_keys_database:
-		if(u[0] == username):
-			#authenticate and reuse the key
-			shared_key_exist = True
-			send_talk_to_user_authenticate(conn, u, 1, s)
 
-	if(shared_key_exist == False):
+	#check to see if this user already has a shared key with username
+	u = user_session_key(username)
+	if(u is not None):
+		send_talk_to_user_authenticate(conn, u, 1, s)
+
+	if(u is None):
 		#Key establishment using DH with server
 		DH_key_establishment_server(conn, username)
 		time.sleep(2)
@@ -424,7 +435,8 @@ def main():
 
 	public_key_file_server = sys.argv[3]
 
-
+	global public_key
+	global private_key
 	public_key, private_key = LoadKeys(public_key_file, private_key_file)
 
 	public_key_server, temp = LoadKeys(public_key_file_server, None)

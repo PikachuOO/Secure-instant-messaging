@@ -27,6 +27,21 @@ proof_hash = ''
 last_REQSTART = ''
 
 
+def retrieve_pubkey(username):
+
+	for i in pub_keys:
+		if(i[0] == username):
+  			public_key, temp = LoadKeys(i[1], None)
+			return public_key
+	return None
+
+def retrieve_addr(username):
+
+	for i in users:
+		if(username == i[0]):
+			return i[1]
+	return None
+
 def create_proof(length):
 	nonce = ''
 	for i in range(0, length):
@@ -54,7 +69,7 @@ def authenticate_talkto(s, addr, step, data):
 
 
 	if(step == 3):
-		#recv msg3 PROOFBACK: verify initiator, verify signature
+		#recv msg3 PROOFBACK:
 
 		#validate proofback regarding proof
 		proof_back = data['proof_back'].encode()
@@ -63,7 +78,7 @@ def authenticate_talkto(s, addr, step, data):
 			print("Proofback not valid! You are probably trying to DOS attack me...")
 			return
 
-		#validate sender based on previous msg
+		#validate initiator based on previous msg
 		initiator_username = data['initiator_username']
 
 		if(initiator_username != last_REQSTART['initiator_username']):
@@ -72,17 +87,17 @@ def authenticate_talkto(s, addr, step, data):
 
 		
 		#verify signature
+		pk = retrieve_pubkey(initiator_username)
 		m = data['proof_back'] + data['initiator_username'] + data['receiver_username']
-		if(m != m):#sign(m) != data['signature']
+		
+	
+		if( VerifySign(m.encode(), sig, pk) == False):
 			print("Wrong signature!")
 			return	
 
-		#find address of stored des_username
-		des_addr = None
-		for i in users:
-			if(last_REQSTART['des_username'].encode() == i[0]):
-				des_addr = i[1]
 
+		#find address of stored des_username
+		des_addr = retrieve_addr(last_REQSTART['des_username'].encode())
 
 		if(des_addr is not None):
 			#send msg 4 PUBKEY
@@ -220,11 +235,8 @@ def main():
 		if(data['type'] == 'HI'):
 			user = (data['username'].encode(), addr)
 			pubkey_find = False
-			for i in pub_keys:
-				username = i[0]
-				if(username == user[0]):
-					pubkey_find = True
-			if(pubkey_find == False):
+			pubkey = retrieve_pubkey(user[0])
+			if(pubkey_find is None):
 				print('Server does not have public_key of ' + user[0])
 			else:
 				users.append(user)
