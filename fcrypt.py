@@ -4,6 +4,7 @@ from cryptography.hazmat.primitives import hashes, hmac, serialization
 import os, sys, getopt, base64
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+constant_nonce = '\xb8Iqu\xdf&vs+\x9b\xb4\xe6\x07A\xac['
 
 def LoadKeys(public_key_file, private_key_file = None):
 	# Load private key
@@ -31,20 +32,24 @@ def Hash(message):
 	digest.update(message.encode())
 	return digest.finalize()
 
-def AESCTREncrypt(plain_text, k, n):
-  #Encrypt plain_text with key k and nonce n using CTR mode
-  c = Cipher(algorithms.AES(k), modes.CTR(n), backend=default_backend())
-  encryptor = c.encryptor()
-  cipher = encryptor.update(plain_text) + encryptor.finalize()
-  return cipher
+def AESCTREncrypt(plain_text, k, n = 1):
+	if(n == 1):
+		n = constant_nonce
+	#Encrypt plain_text with key k and nonce n using CTR mode
+	c = Cipher(algorithms.AES(k), modes.CTR(n), backend=default_backend())
+	encryptor = c.encryptor()
+	cipher = encryptor.update(plain_text) + encryptor.finalize()
+	return cipher
 
 
-def AESCTRDecrypt(cipher_text, k, n):
-  #Decrypt cipher_text with key k and nonce n using CTR mode
-  c = Cipher(algorithms.AES(k), modes.CTR(n), backend=default_backend())
-  decryptor = c.decryptor()
-  message = decryptor.update(cipher_text) + decryptor.finalize()
-  return message
+def AESCTRDecrypt(cipher_text, k, n = 1):
+	if(n == 1):
+		n = constant_nonce
+	#Decrypt cipher_text with key k and nonce n using CTR mode
+	c = Cipher(algorithms.AES(k), modes.CTR(n), backend=default_backend())
+	decryptor = c.decryptor()
+	message = decryptor.update(cipher_text) + decryptor.finalize()
+	return message
 
 
 def SymmetricEnc(message):

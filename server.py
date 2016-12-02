@@ -55,16 +55,24 @@ def authenticate_talkto(s, addr, step, data):
 	if(step == 2):
 		#recv REQSTART
 		#send msg 2(hash) PROOF
-		hash_of_nonce, sub_nonce = create_proof(32)
+		des_username = data['des_username']
+		if(retrieve_addr(des_username) is None):
+			msg = {
+				'type': 'Error',
+				'msg': 'User does not exist'
+			}
+		else:
+			hash_of_nonce, sub_nonce = create_proof(32)
 
-		global last_REQSTART
-		last_REQSTART = data
+			global last_REQSTART
+			last_REQSTART = data
 
-		msg = {
-			'type': 'PROOF',
-			'hash_of_nonce': base64.b64encode(hash_of_nonce),
-			'sub_nonce': sub_nonce,
-		}
+			msg = {
+				'type': 'PROOF',
+				'hash_of_nonce': base64.b64encode(hash_of_nonce),
+				'sub_nonce': sub_nonce,
+			}
+
 		s.sendto(json.dumps(msg).encode(), addr)
 
 
@@ -110,9 +118,7 @@ def authenticate_talkto(s, addr, step, data):
 			NB = os.urandom(16)
 			NB = base64.b64encode(NB).decode()
 
-			g = 'g'
-			p = 'p'
-
+			
 			# Finding public keys of initiator and receiver
 			pubkey_initiator = None
 			pubkey_receiver = None
@@ -138,13 +144,10 @@ def authenticate_talkto(s, addr, step, data):
 				
 				'initiator_username': initiator_username,
 				'pubkey_initiator': pubkey_initiator,
-				'g': g,
-				'p': p,
+				'g': gen,
+				'p': prime,
 				
 			}
-			#ENCB_inner_TTB = inner_TTB #enc(inner_TTB, pubkey_receiver)
-			#signature = 'signature'# sign(ENCN_inner_TTB)
-
 			#Encryption of TTB
 			pk, temp = LoadKeys(pubkey_receiver, None)
 
@@ -154,9 +157,6 @@ def authenticate_talkto(s, addr, step, data):
 			#Signing
 			signature = RSASign(ENC_inner_TTB, private_key)
 			signature = base64.b64encode(signature)
-
-			#print("###", type(signature), signature)
-			#print("!!!", type(ENC_inner_TTB), ENC_inner_TTB)
 
 			TTB = {
 				'ENC': ENC_inner_TTB,
@@ -173,8 +173,8 @@ def authenticate_talkto(s, addr, step, data):
 
 				'pubkey_receiver': pubkey_receiver,
 
-				'g': g,
-				'p': p,
+				'g': gen,
+				'p': prime,
 
 			}
 
@@ -250,12 +250,15 @@ def main():
 
 	
 
-
+	global gen
+	gen = 2
+	global prime
+	prime = 0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3DC2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F83655D23DCA3AD961C62F356208552BB9ED529077096966D670C354E4ABC9804F1746C08CA237327FFFFFFFFFFFFFFFF
 	
 
 	while(1):
 		#recive msg
-		data, addr = s.recvfrom(4096)
+		data, addr = s.recvfrom(8192)
 		data = json.loads(data.decode())
 		print(data['type'], data, addr)
 		print('\n')

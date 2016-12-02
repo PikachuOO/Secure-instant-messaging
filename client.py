@@ -18,16 +18,37 @@ from fcrypt import *
 
 shared_keys_database = []
 auth_users = []
-username = ''
+
 server_addr = ('127.0.0.1', 8000)
 
 #remembering values
 last_PUBKEY = ''
-last_DHSTARTREQ = ''
 last_REQSTART = ''
 last_STARTTALKAUTH = ''
 last_CONTINUETALKAUTH = ''
 
+#Helper functions
+def retrieve_auth_user(username):
+	
+	for u in auth_users:
+		if(u[0] == username):
+			return u
+	return None
+
+def retrieve_session_key(username):
+
+	for i in shared_keys_database:
+		user = i[1]
+		if(user[0] == username):
+			return i[0]
+	return None
+
+def retrieve_user(username):
+	for i in shared_keys_database:
+		user = i[1]
+		if(user[0] == username):
+			return user
+	return None
 #Send a msg to server to socket s
 def SendMassage(conn):
 	while(1):
@@ -43,14 +64,13 @@ def SendMassage(conn):
 		if(msg == 'CONVERSATION'):
 			print('Whom you want to talk?\n')
 			des_username = raw_input('')
-			des_user = None
 
+			
 			talkto(conn, des_username)
-			find = False
-			time.sleep(1.5)
-			for u in auth_users:
-				if(u[0] == des_username):
-					des_user = u
+
+			time.sleep(1.3)
+
+			des_user = retrieve_auth_user(des_username)
 
 			if(des_user != None):
 				print('Enter your message:')
@@ -62,14 +82,14 @@ def SendMassage(conn):
 #Receive a msg from socket s 
 def ListenForMassage(conn):
 	while(1):
-		data, addr = conn.recvfrom(4096)
-		#print("!!!", data)
+		data, addr = conn.recvfrom(8192)
 		data = json.loads(data.decode())
 		print(data['type'], data)
 		print('\n')
+		if(data['type'] == 'Error'):
+			print(data['msg'])
 
-
-		if(data['type'] == 'PROOF'):
+		elif(data['type'] == 'PROOF'):
 			DH_key_establishment_server(conn, 'des_username_does_not_matter', 2, data)
 
 		elif(data['type'] == 'PUBKEY'):
@@ -111,44 +131,42 @@ def ListenForMassage(conn):
 			if(find):
 				recv_conversation(conn, data)
 			else:
-				print("I do not trust you, maybe you should first establish a session key!")
+				print("I do not have established session key with you, or maybe it has expired!")
 
 
 
 	
 
-
-
-def retrieve_session_key(username):
-
-	for i in shared_keys_database:
-		user = i[1]
-		if(user[0] == username):
-			return i[0]
-	return None
-
-def user_session_key(username):#if username has a session key, return the user
-	for s, u, t in shared_keys_database:
-		if(u[0] == username):
-			return u
-	return None
-
 def recv_conversation(conn, data):
 	# show message to the user
-	print(data['username'] + ': ' + data['message'])
+	session_key = retrieve_session_key(data['username'])
+
+	enc_msg = data['message']
+	enc_msg = base64.b64decode(enc_msg)
+
+	msg = AESCTRDecrypt(enc_msg, session_key)
+
+	print(data['username'] + ': ' + msg)
 
 
 def send_conversation(conn, des_user, data):
 	#send msg to des_user
+	session_key = retrieve_session_key(des_user[0])
+
+
+
+	enc_data = AESCTRDecrypt(data, session_key)
+	enc_data = base64.b64encode(enc_data)
+
 	msg = {
 		'type': 'CONVERSATION',
 		'username': username,
-		'message': data
+		'message': enc_data,
 
 	}
 	conn.sendto(json.dumps(msg).encode(), des_user[1])
-	
 
+	
 
 def recv_talk_to_user_authenticate(conn, des_user, step, data):
 	global last_CONTINUETALKAUTH
@@ -164,25 +182,28 @@ def recv_talk_to_user_authenticate(conn, des_user, step, data):
 		if( username != receiver_username):
 			print("Receiver username is not me.")
 			return
-		#decrypt ENCA and verify it
+		#decrypt ENCNA and verify it
 		session_key = retrieve_session_key(initiator_username)
-		NA = ENCNA #symmetricdec(ENCNA, session_key)
+
+		ENCNA = base64.b64decode(ENCNA)
+
+		NA = AESCTRDecrypt(ENCNA, session_key)
+		NA = base64.b64encode(NA)
+
 		
 		NB = os.urandom(16)
-		NB = base64.b64encode(NB).decode()
+		
+		ENC_NB = AESCTREncrypt(NB, session_key)
+		ENC_NB = base64.b64encode(ENC_NB)
 
-		NA_NB = {
-			'NA': NA,
-			'NB': NB,
-		}
-		ENC_NA_NB = NA_NB # symmetricenc(NA_NB, session_key)
+		NB = base64.b64encode(NB)
 
 		#send msg 2 CONTINUETALKAUTH
-
 		msg = {
 			'type' : 'CONTINUETALKAUTH',
 			'receiver_username' : username,
-			'ENC_NA_NB': ENC_NA_NB,
+			'NA': NA,
+			'ENC_NB': ENC_NB
 		}
 
 
@@ -196,24 +217,26 @@ def recv_talk_to_user_authenticate(conn, des_user, step, data):
 		#recv msg 3 FINISHTALKAUTH, verify NB with session key
 
 		session_key = last_CONTINUETALKAUTH['session_key']
-		ENCNB = data['ENCNB']
-		NB = ENCNB # symmetricdec(ENCNB, session_key)
-		if(NB != last_CONTINUETALKAUTH['NB']):
+
+		if(data['NB'] != last_CONTINUETALKAUTH['NB']):
 			print("Wrong encryption of my nonce NB in CONTINUETALKAUTH")
 
 		#add username to authenticated users
 		auth_users.append(des_user)
 
-def send_talk_to_user_authenticate(conn, des_user, step, data):
+def send_talk_to_user_authenticate(conn, des_user, step, data = None):
 	global last_STARTTALKAUTH
 	if(step == 1):	
 		#send msg 1 STARTTALKAUTH to username
 		NA = os.urandom(16)
-		NA = base64.b64encode(NA).decode()
 
 		session_key = retrieve_session_key(des_user[0])
 
-		ENCNA = NA #symmetricenc(NA, session_key)
+		ENCNA = AESCTREncrypt(NA, session_key)
+		ENCNA = base64.b64encode(ENCNA)
+
+		NA = base64.b64encode(NA).decode()
+
 		msg = {
 			'type' : 'STARTTALKAUTH',
 			'initiator_username' : username,
@@ -229,23 +252,24 @@ def send_talk_to_user_authenticate(conn, des_user, step, data):
 
 	if(step == 2):
 		#recv msg 2 CONTINUETALKAUTH, verify NA with session key
-		ENC_NA_NB = data['ENC_NA_NB']
-
+		ENC_NB = data['ENC_NB']
+		ENC_NB = base64.b64decode(ENC_NB)
 
 		session_key = last_STARTTALKAUTH['session_key']
-		NA_NB = ENC_NA_NB # symmetricdec(ENC_NA_NB, session_key)
-		
+
+		NB = AESCTRDecrypt(ENC_NB, session_key)
+		NB = base64.b64encode(NB)
+
 		#verify NA
-		if( NA_NB['NA'] != last_STARTTALKAUTH['NA']):
+		if( data['NA'] != last_STARTTALKAUTH['NA']):
 			print("Wrong encryption of my nonce NA in STARTTALKAUTH")
-		NB = NA_NB['NB']
-		ENCNB = NB # symmetricenc(NB, session_key)
+
 
 		#send msg 3 FINISHTALKAUTH
 		msg = {
 			'type' : 'FINISHTALKAUTH',
 			'initiator_username' : username,
-			'ENCNB': ENCNB,
+			'NB': NB,
 		}			
 		conn.sendto(json.dumps(msg).encode(), des_user[1])
 
@@ -281,6 +305,7 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 	#retrieving values from TTB
 	g = inner_TTB['g']
 	p = inner_TTB['p']
+	
 	pubkey_initiator = inner_TTB['pubkey_initiator']
 	NA = inner_TTB['NA']
 	NB = inner_TTB['NB']
@@ -296,7 +321,7 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 		return
 
 	#verify signature
-	m = data['NA'] + data['G_A_mod_P']
+	m = data['NA'] + str(data['G_A_mod_P'])
 	signature = base64.b64decode(data['signature'])
 	pk, temp = LoadKeys(pubkey_initiator, None)
 	if(VerifySign( m.encode(), signature, pk)):
@@ -304,18 +329,22 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 		return
 
 
-
+	
 	#send msg 2: DHCONTINUEREQ to initiator
-	m = NB + 'G_B_mod_P'
+	G_A_mod_P = data['G_A_mod_P']
+	b = 15
+	G_B_mod_P = pow(g, b, p)
+
+	#sign
+	m = NB + str(G_B_mod_P)
 	signature = RSASign(m.encode(), private_key)
 	signature = base64.b64encode(signature)
 
 	msg = {
 		'type' : 'DHCONTINUEREQ',
 		'receiver_username' : username,
-
 		'NB': NB,
-		'G_B_mod_P': 'G_B_mod_P',
+		'G_B_mod_P': G_B_mod_P,
 		'signature': signature
 	}
 
@@ -323,21 +352,25 @@ def DH_key_establishment_recv_from_user(conn, des_addr, data):
 
 	#build shared_key and add it to the list shared_keys_database
 	des_username = data['initiator_username']
-	auth_users.append((des_username, des_addr))
-	session_key = 'session_key'#G^ab mod p
-	shared_keys_database.append((session_key, (des_username, des_addr), 1000))
+	#auth_users.append((des_username, des_addr))
+	session_key = Hash(str(pow(G_A_mod_P, b, p)))
 
+	shared_keys_database.append((session_key, (des_username, des_addr), 1000))
+	print(shared_keys_database)
 
 def DH_key_establishment_user(conn, des_addr, step, data):
+	global last_DHSTARTREQ_DH
 	if(step == 1): 	
 		#send msg1 DHSTARTREQ:
 		
 		#retrieve values from data(PUBKEY)
 		g = data['g']
 		p = data['p']
+		a = 12
+		
+		G_A_mod_P = pow(g, a, p)
 
-		#signature = 'signature'#sign(data['NA'] + 'G_A_mod_P')
-		m = data['NA'] + 'G_A_mod_P'
+		m = data['NA'] + str(G_A_mod_P)
 		signature = RSASign(m.encode(), private_key)
 		signature = base64.b64encode(signature)
 
@@ -347,25 +380,29 @@ def DH_key_establishment_user(conn, des_addr, step, data):
 
 			'TTB': data['TTB'],
 			'NA': data['NA'],
-			'G_A_mod_P': 'G_A_mod_P',
+			'G_A_mod_P': G_A_mod_P,
 			'signature': signature
 
 		}
-		global last_DHSTARTREQ
-		last_DHSTARTREQ = msg
+
+		last_DHSTARTREQ_DH = {
+			'a': a,
+			'p': p
+		}
 		conn.sendto(json.dumps(msg).encode(), des_addr)
 
 	if(step == 2):
 		#recv msg 2 DHCONTINUEREQ: verify NB, verify signature
 		des_username = data['receiver_username']
 		NB = data['NB']
+		G_B_mod_P = data['G_B_mod_P']
 
 		#verify NB
 		if( NB != last_PUBKEY['NB']):
 			print("Your nonce does not match with my PUBKEY data")
 			return
 		#verify signature
-		m = NB + data['G_B_mod_P']
+		m = NB + str(G_B_mod_P)
 		signature = data['signature']
 		signature = base64.b64decode(signature)
 		pubkey_receiver = last_PUBKEY['pubkey_receiver']
@@ -376,10 +413,10 @@ def DH_key_establishment_user(conn, des_addr, step, data):
 			return
 
 		#build shared_key and add it to the list shared_keys_database
-		auth_users.append((des_username, des_addr))
-		session_key = 'session_key'#G^ab mod p
+		#auth_users.append((des_username, des_addr))
+		session_key = Hash(str(pow(G_B_mod_P, last_DHSTARTREQ_DH['a'], last_DHSTARTREQ_DH['p'])))
 		shared_keys_database.append((session_key, (des_username, des_addr), 1000))
-
+		print(shared_keys_database)
 
 def DH_key_establishment_server(conn, des_username, step = 1, data = ''):
 	if(step == 1):
@@ -445,21 +482,23 @@ def DH_key_establishment_server(conn, des_username, step = 1, data = ''):
 
 
 
-def talkto(conn, username): #User wants to talk to username
-	for u in auth_users:
-		if(u[0] == username):
-			return
+def talkto(conn, des_username, rept = 1): #User wants to talk to username
+	if(retrieve_auth_user(des_username) is not None): #If user is already authenticated
+		return
 
 	#check to see if this user already has a shared key with username
-	u = user_session_key(username)
+	u = retrieve_user(des_username)
 	if(u is not None):
-		send_talk_to_user_authenticate(conn, u, 1, s)
+		send_talk_to_user_authenticate(conn, u, 1)
+		return
 
 	if(u is None):
 		#Key establishment using DH with server
-		DH_key_establishment_server(conn, username)
-		time.sleep(2)
-		talkto(conn, username)
+		DH_key_establishment_server(conn, des_username)
+		time.sleep(0.8)
+		if(rept == 1):
+			talkto(conn, des_username, 2)
+		return
 
 def find_proof_back(hash_of_nonce, sub_nonce):
 
